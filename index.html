@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>경매 게임 관리자</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 기본 스크롤바 숨김 및 부드러운 스크롤 */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #E5E5EA; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #D1D1D6; }
+        body { -webkit-tap-highlight-color: transparent; }
+    </style>
+</head>
+<body class="bg-[#F2F2F7] text-[#1C1C1E] font-sans antialiased selection:bg-blue-200">
+    <div id="app-root"></div>
+
+    <script>
+        // 라운드별 기본 설정 데이터
+        const ROUND_DATA = [
+            { round: 1, prize: 10, rules: "최고가 낙찰 / 2등 페널티", has3rdPenalty: false, isBlind: false },
+            { round: 2, prize: 20, rules: "최고가 낙찰 / 2등 페널티", has3rdPenalty: false, isBlind: false },
+            { round: 3, prize: 25, rules: "비공개 입찰 / 2등 페널티", has3rdPenalty: false, isBlind: true },
+            { round: 4, prize: 30, rules: "최고가 낙찰 / 2등 및 3등 페널티", has3rdPenalty: true, isBlind: false },
+            { round: 5, prize: 40, rules: "비공개 입찰 / 2등 및 3등 페널티", has3rdPenalty: true, isBlind: true },
+        ];
+
+        // 상태 데이터 관리
+        let gameState = 'setup'; // 'setup', 'playing', 'result'
+        let teams = [
+            { id: 1, name: '1조', chips: 50 },
+            { id: 2, name: '2조', chips: 50 },
+            { id: 3, name: '3조', chips: 50 },
+            { id: 4, name: '4조', chips: 50 },
+            { id: 5, name: '5조', chips: 50 },
+        ];
+        let currentRound = 1;
+        let bids = {};
+        let historyLog = [];
+        let errorMessage = '';
+        let blindBidLink = 'https://naver.me/5t7VKJ3I'; // 기본 링크 설정
+
+        // UI 렌더링 함수
+        function render() {
+            const root = document.getElementById('app-root');
+            
+            if (gameState === 'setup') {
+                root.innerHTML = `
+                    <div class="min-h-screen p-6 md:p-12 flex justify-center items-center">
+                        <div class="max-w-2xl w-full bg-white/80 backdrop-blur-xl p-8 md:p-12 rounded-[2.5rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white h-fit transition-all">
+                            <h1 class="text-4xl font-extrabold tracking-tight mb-3 text-center text-[#1C1C1E]">경매 게임 설정</h1>
+                            <p class="text-[#8E8E93] mb-8 text-center font-medium">참가할 팀과 비공개 입찰 링크를 설정해주세요.</p>
+                            
+                            <div class="mb-6 space-y-3">
+                                <h3 class="text-lg font-bold text-[#1C1C1E] px-2 mb-2">팀 설정</h3>
+                                ${teams.map(team => `
+                                    <div class="flex items-center gap-3 bg-[#F2F2F7] p-2 pr-4 rounded-2xl transition-all hover:bg-[#E5E5EA]">
+                                        <input type="text" value="${team.name}" oninput="updateTeamName(${team.id}, this.value)" class="flex-1 bg-transparent border-none p-2 rounded-xl text-lg font-semibold focus:ring-0 outline-none px-4" />
+                                        <button onclick="removeTeam(${team.id})" class="bg-[#FF3B30]/10 text-[#FF3B30] px-4 py-2 rounded-xl font-bold text-sm hover:bg-[#FF3B30]/20 active:scale-95 transition-all">삭제</button>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            
+                            <button onclick="addTeam()" class="w-full bg-[#F2F2F7] text-[#007AFF] py-4 rounded-2xl font-semibold text-lg hover:bg-[#E5E5EA] active:scale-[0.98] transition-all mb-8">
+                                + 팀 추가
+                            </button>
+
+                            <!-- 비공개 입찰 링크 설정 영역 추가 -->
+                            <div class="mb-10 bg-white border border-gray-100 shadow-sm p-6 rounded-[2rem]">
+                                <h3 class="text-lg font-bold text-[#1C1C1E] mb-2">비공개 입찰 링크 설정</h3>
+                                <p class="text-[#8E8E93] text-sm mb-4 font-medium">3, 5라운드에서 학생들이 입찰가를 제출할 폼 주소를 입력하세요.</p>
+                                <input type="text" value="${blindBidLink}" oninput="updateBlindBidLink(this.value)" placeholder="https://..." class="w-full bg-[#F2F2F7] border-transparent focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 rounded-xl p-3 text-[15px] font-medium outline-none transition-all" />
+                            </div>
+
+                            ${errorMessage ? `<div class="bg-[#FF3B30]/10 text-[#FF3B30] p-4 rounded-2xl mb-6 font-semibold text-center">${errorMessage}</div>` : ''}
+                            
+                            <button onclick="startGame()" class="w-full bg-[#007AFF] text-white py-4 rounded-2xl font-bold text-xl shadow-[0_4px_14px_0_rgba(0,122,255,0.39)] hover:bg-[#0066CC] active:scale-[0.98] transition-all">
+                                게임 시작
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } else if (gameState === 'playing') {
+                const roundInfo = ROUND_DATA[currentRound - 1];
+                
+                // 표시용 링크 가공 (https:// 등 제거) 및 QR코드 URL 생성
+                const displayLink = blindBidLink ? blindBidLink.replace(/^https?:\/\//, '') : '링크 미설정';
+                const qrCodeUrl = blindBidLink ? `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(blindBidLink)}` : '';
+
+                root.innerHTML = `
+                    <div class="min-h-screen p-4 md:p-10">
+                        <div class="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+                            
+                            <!-- 왼쪽 메인 패널 -->
+                            <div class="lg:col-span-2 space-y-8">
+                                <!-- 헤더 및 라운드 정보 -->
+                                <div class="bg-white/90 backdrop-blur-xl p-8 rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white">
+                                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                                        <div>
+                                            <h2 class="text-3xl font-extrabold tracking-tight text-[#1C1C1E] mb-1">${currentRound}라운드 진행 중</h2>
+                                            <p class="text-[#8E8E93] font-medium">규칙: ${roundInfo.rules}</p>
+                                        </div>
+                                        <button onclick="endGameEarly()" class="text-[#FF3B30] bg-[#FF3B30]/10 hover:bg-[#FF3B30]/20 font-bold px-5 py-2.5 rounded-full active:scale-95 transition-all text-sm">
+                                            조기 종료
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- 보상 칩 개수 강조 패널 -->
+                                    <div class="bg-gradient-to-r from-[#007AFF]/10 to-[#007AFF]/5 border border-[#007AFF]/20 p-6 rounded-[1.5rem] flex items-center justify-between shadow-[inset_0_2px_10px_rgba(0,122,255,0.05)]">
+                                        <div class="flex items-center gap-4">
+                                            <div class="bg-gradient-to-br from-[#007AFF] to-[#0056B3] p-3.5 rounded-2xl shadow-[0_4px_10px_rgba(0,122,255,0.3)]">
+                                                <!-- 칩(코인 더미) SVG 아이콘 -->
+                                                <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"></path>
+                                                </svg>
+                                            </div>
+                                            <span class="text-[#1C1C1E] font-extrabold text-xl">이번 라운드 보상</span>
+                                        </div>
+                                        <div class="flex items-baseline gap-1">
+                                            <span class="text-5xl md:text-6xl font-black text-[#007AFF] tracking-tighter drop-shadow-sm">${roundInfo.prize}</span>
+                                            <span class="text-2xl font-bold text-[#007AFF]/70 mb-1">개</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 비공개 입찰 안내 (해당 라운드만) -->
+                                ${roundInfo.isBlind ? `
+                                <div class="bg-gradient-to-br from-[#F2F2F7] to-[#E5E5EA] p-8 rounded-[2rem] shadow-sm border border-white flex flex-col items-center text-center">
+                                    <span class="bg-[#5E5CE6] text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-4">Blind Bid</span>
+                                    <h3 class="text-2xl font-bold text-[#1C1C1E] mb-2">비공개 입찰 라운드</h3>
+                                    <p class="text-[#8E8E93] mb-8 font-medium">스마트폰으로 아래 주소를 입력하거나 QR코드를 스캔하여 입찰하세요.</p>
+                                    
+                                    <div class="flex flex-col md:flex-row items-center gap-6 w-full max-w-2xl">
+                                        <div class="flex-1 bg-white py-5 px-6 rounded-2xl shadow-sm border border-gray-100 w-full overflow-hidden">
+                                            <span class="text-2xl md:text-3xl font-mono font-bold text-[#007AFF] tracking-tight break-all">${displayLink}</span>
+                                        </div>
+                                        ${qrCodeUrl ? `
+                                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 shrink-0">
+                                            <img src="${qrCodeUrl}" alt="QR Code" class="w-32 h-32 md:w-40 md:h-40 rounded-lg">
+                                        </div>
+                                        ` : ''}
+                                    </div>
+                                </div>
+                                ` : ''}
+
+                                <!-- 팀별 입찰 입력 -->
+                                <div class="bg-white/90 backdrop-blur-xl p-8 rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white">
+                                    <div class="grid grid-cols-4 text-[11px] font-bold text-[#8E8E93] uppercase tracking-wider mb-3 px-4">
+                                        <div>팀명</div>
+                                        <div class="text-center">보유 칩</div>
+                                        <div class="text-center">수동 조작</div>
+                                        <div class="text-right">입찰가 입력</div>
+                                    </div>
+                                    
+                                    <div class="space-y-3">
+                                        ${teams.map(team => `
+                                            <div class="grid grid-cols-4 items-center bg-[#F2F2F7] p-3 pl-5 pr-3 rounded-2xl transition-all hover:bg-[#E5E5EA]">
+                                                <div class="font-bold text-[#1C1C1E] text-lg">${team.name}</div>
+                                                <div class="text-center text-xl font-extrabold text-[#1C1C1E]">${team.chips}</div>
+                                                <div class="flex justify-center gap-2">
+                                                    <button onclick="adjustChips(${team.id}, -1)" class="w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-[#1C1C1E] font-bold text-xl hover:bg-gray-50 active:scale-90 transition-all">-</button>
+                                                    <button onclick="adjustChips(${team.id}, 1)" class="w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-[#1C1C1E] font-bold text-xl hover:bg-gray-50 active:scale-90 transition-all">+</button>
+                                                </div>
+                                                <div class="flex justify-end">
+                                                    <input type="number" min="0" value="${bids[team.id] !== undefined ? bids[team.id] : ''}" oninput="updateBid(${team.id}, this.value)" placeholder="입찰액" class="w-full max-w-[120px] bg-white border-transparent focus:border-[#007AFF] focus:ring-2 focus:ring-[#007AFF]/20 rounded-xl p-3 text-right font-bold text-lg outline-none transition-all shadow-sm" />
+                                                </div>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+
+                                    ${errorMessage ? `<div class="mt-6 bg-[#FF3B30]/10 text-[#FF3B30] p-4 rounded-xl font-semibold text-center">${errorMessage}</div>` : ''}
+                                    
+                                    <button onclick="applyRoundResults()" class="mt-8 w-full bg-[#34C759] text-white py-4 rounded-2xl font-bold text-xl shadow-[0_4px_14px_0_rgba(52,199,89,0.39)] hover:bg-[#2EB850] active:scale-[0.98] transition-all">
+                                        결과 적용 및 다음으로
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- 오른쪽 기록 패널 -->
+                            <div class="bg-white/90 backdrop-blur-xl p-8 rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white h-[calc(100vh-5rem)] flex flex-col sticky top-10">
+                                <h3 class="text-xl font-extrabold tracking-tight text-[#1C1C1E] mb-6 flex items-center gap-2">
+                                    <svg class="w-5 h-5 text-[#8E8E93]" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                    기록
+                                </h3>
+                                <div class="flex-1 overflow-y-auto pr-2 text-[15px] leading-relaxed text-[#3A3A3C] font-medium whitespace-pre-line bg-[#F2F2F7] p-5 rounded-2xl">
+                                    ${historyLog.length === 0 ? "<span class='text-[#8E8E93]'>아직 기록이 없습니다.</span>" : historyLog.join('\n\n')}
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                `;
+            } else if (gameState === 'result') {
+                const sortedTeams = [...teams].sort((a, b) => b.chips - a.chips);
+                const winnerChips = sortedTeams[0].chips;
+                const winners = sortedTeams.filter(t => t.chips === winnerChips);
+                root.innerHTML = `
+                    <div class="min-h-screen p-6 flex items-center justify-center">
+                        <div class="max-w-xl w-full bg-white/90 backdrop-blur-xl p-10 md:p-14 rounded-[3rem] shadow-[0_20px_40px_rgb(0,0,0,0.08)] border border-white text-center">
+                            <span class="bg-[#007AFF]/10 text-[#007AFF] text-sm font-bold px-4 py-1.5 rounded-full uppercase tracking-wider mb-6 inline-block">Game Over</span>
+                            <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight mb-10 text-[#1C1C1E]">최종 결과</h1>
+                            
+                            <div class="bg-gradient-to-b from-[#FFF500]/20 to-transparent p-8 rounded-[2rem] mb-10 border border-[#FFF500]/30">
+                                <p class="text-[#8E8E93] font-bold uppercase tracking-widest text-sm mb-2">최종 우승</p>
+                                <p class="text-4xl font-black text-[#1C1C1E] mb-4">
+                                    ${winners.map(w => w.name).join(', ')}
+                                </p>
+                                <div class="inline-flex items-center gap-2 bg-white px-5 py-2.5 rounded-full shadow-sm">
+                                    <span class="text-[#8E8E93] font-semibold text-sm">최종 보유 칩</span>
+                                    <span class="text-[#007AFF] font-black text-xl">${winnerChips}개</span>
+                                </div>
+                            </div>
+                            
+                            <div class="text-left bg-[#F2F2F7] p-6 rounded-[2rem] mb-10">
+                                <h3 class="text-lg font-bold mb-4 text-[#8E8E93] px-2">전체 순위</h3>
+                                <div class="space-y-2">
+                                    ${sortedTeams.map((team, index) => `
+                                        <div class="flex justify-between items-center p-3 px-4 bg-white rounded-xl shadow-sm">
+                                            <span class="font-bold text-[#1C1C1E] flex items-center gap-3">
+                                                <span class="text-[#8E8E93] w-4">${index + 1}</span>
+                                                ${team.name}
+                                            </span>
+                                            <span class="font-black text-[#1C1C1E]">${team.chips}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            
+                            <button onclick="window.location.reload()" class="w-full bg-[#1C1C1E] text-white py-4 rounded-2xl font-bold text-lg hover:bg-[#2C2C2E] active:scale-[0.98] transition-all">
+                                새 게임 시작
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // 상태 조작 함수들
+        window.updateBlindBidLink = function(value) {
+            blindBidLink = value;
+        };
+
+        window.updateTeamName = function(id, value) {
+            const team = teams.find(t => t.id === id);
+            if (team) team.name = value;
+        };
+
+        window.removeTeam = function(id) {
+            teams = teams.filter(t => t.id !== id);
+            render();
+        };
+
+        window.addTeam = function() {
+            const newId = teams.length > 0 ? Math.max(...teams.map(t => t.id)) + 1 : 1;
+            teams.push({ id: newId, name: newId + '조', chips: 50 });
+            render();
+        };
+
+        window.startGame = function() {
+            if (teams.length < 2) {
+                errorMessage = '최소 2개 이상의 팀이 필요합니다.';
+                render();
+                return;
+            }
+            errorMessage = '';
+            gameState = 'playing';
+            render();
+        };
+
+        window.adjustChips = function(id, amount) {
+            const team = teams.find(t => t.id === id);
+            if (team) {
+                team.chips = Math.max(0, team.chips + amount);
+            }
+            render();
+        };
+
+        window.updateBid = function(id, value) {
+            bids[id] = value;
+        };
+
+        window.applyRoundResults = function() {
+            errorMessage = '';
+            const roundInfo = ROUND_DATA[currentRound - 1];
+            
+            // 유효성 검사
+            for (let i = 0; i < teams.length; i++) {
+                const team = teams[i];
+                const bidNum = parseInt(bids[team.id], 10);
+                const bid = isNaN(bidNum) ? 0 : bidNum;
+
+                if (bid > team.chips) {
+                    errorMessage = team.name + '의 입찰가(' + bid + ')가 보유 칩(' + team.chips + ')보다 많습니다.';
+                    render();
+                    return;
+                }
+            }
+
+            // 입찰가 그룹화
+            const activeBids = teams
+                .map(t => {
+                    const bidNum = parseInt(bids[t.id], 10);
+                    const bid = isNaN(bidNum) ? 0 : bidNum;
+                    return { id: t.id, name: t.name, bid: bid };
+                })
+                .filter(t => t.bid > 0);
+
+            const uniqueBidValues = [...new Set(activeBids.map(t => t.bid))].sort((a, b) => b - a);
+
+            // 1위 동점자 확인
+            const firstPlaceBidders = activeBids.filter(t => t.bid === uniqueBidValues[0]);
+            if (firstPlaceBidders.length > 1) {
+                const tieNames = firstPlaceBidders.map(t => t.name).join(', ');
+                errorMessage = '1위 동점자(' + tieNames + ')가 있습니다. 재경매를 통해 승자를 결정한 후 기입해주세요.';
+                render();
+                return;
+            }
+
+            // 결과 적용 및 기록 생성
+            let roundLog = '[' + currentRound + '라운드 결과]\n';
+
+            if (uniqueBidValues.length > 0) {
+                const highestBid = uniqueBidValues[0];
+                const secondBid = uniqueBidValues.length > 1 ? uniqueBidValues[1] : null;
+                const thirdBid = uniqueBidValues.length > 2 ? uniqueBidValues[2] : null;
+
+                teams.forEach(team => {
+                    const bidNum = parseInt(bids[team.id], 10);
+                    const teamBid = isNaN(bidNum) ? 0 : bidNum;
+                    let logText = '';
+
+                    if (teamBid > 0) {
+                        if (teamBid === highestBid) {
+                            team.chips = team.chips - teamBid + roundInfo.prize;
+                            logText = '1위 낙찰 (-' + teamBid + ', +' + roundInfo.prize + ')';
+                        } else if (teamBid === secondBid) {
+                            team.chips = team.chips - teamBid;
+                            logText = '2위 페널티 (-' + teamBid + ')';
+                        } else if (roundInfo.has3rdPenalty && teamBid === thirdBid) {
+                            team.chips = team.chips - teamBid;
+                            logText = '3위 페널티 (-' + teamBid + ')';
+                        }
+                    }
+
+                    if (logText) {
+                        roundLog += team.name + ': ' + logText + ' -> 잔여 ' + team.chips + '개\n';
+                    }
+                });
+            } else {
+                roundLog += "유효한 입찰이 없습니다.\n";
+            }
+
+            historyLog.unshift(roundLog);
+            bids = {}; // 입찰 정보 초기화
+
+            if (currentRound >= 5) {
+                gameState = 'result';
+            } else {
+                currentRound++;
+            }
+            
+            render();
+        };
+
+        window.endGameEarly = function() {
+            if (confirm("게임을 조기 종료하고 결과를 확인하시겠습니까?")) {
+                gameState = 'result';
+                render();
+            }
+        };
+
+        // 초기 화면 렌더링
+        render();
+    </script>
+</body>
+</html>
